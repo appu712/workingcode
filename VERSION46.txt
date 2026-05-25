@@ -963,7 +963,7 @@ table.dt tbody tr:hover{background:var(--bg3);}
       <div class="sd" id="stk-sd"></div>
     </div>
     <div class="sb" id="stk-sb"><div class="sb-n" id="stk-sb-n"></div><div class="sb-c" id="stk-sb-c"></div></div>
-    <div class="fg"><label>ISIN Code <span style="color:var(--grn);font-size:9px;font-weight:700">(recommended for live price)</span></label><input class="mono" id="stk-isin" placeholder="e.g. INE002A01018" maxlength="12" oninput="this.value=this.value.toUpperCase()"></div>
+    <div class="fg"><label>ISIN Code <span style="color:var(--grn);font-size:9px;font-weight:700">(enter ISIN → auto-resolves stock name)</span></label><input class="mono" id="stk-isin" placeholder="e.g. INE002A01018" maxlength="12" oninput="this.value=this.value.toUpperCase();onStkIsinChange()"></div>
     <div class="two">
       <div class="fg"><label>Quantity / Units</label><input type="number" id="stk-qty" placeholder="e.g. 50" min="1" oninput="showStkP()"></div>
       <div class="fg"><label>Avg Cost Price <span class="ru">ரூ</span> (0 = unknown)</label><input type="number" id="stk-avg" placeholder="e.g. 2450.00" step="0.01" min="0" oninput="showStkP()"></div>
@@ -4424,6 +4424,48 @@ function editStk(i){
 }
 function showStkP(){const q=sf(g('stk-qty').value),a=sf(g('stk-avg').value),p=g('stk-prev');if(!p)return;if(q>0){p.style.display='block';p.innerHTML=a>0?`<strong>Preview:</strong> ${q} × <span class="ru">ரூ</span>${fm(a,2)} = <strong style="color:var(--ind)"><span class="ru">ரூ</span>${fm(q*a,2)} invested</strong>`:`<strong>Preview:</strong> ${q} shares · avg = <span class="ru">ரூ</span>0`;}else{p.style.display='none';}}
 function debStk(){clearTimeout(stkDebT);stkDebT=setTimeout(doStkSearch,130);}
+let _stkIsinTimer=null;
+function onStkIsinChange(){
+  clearTimeout(_stkIsinTimer);
+  _stkIsinTimer=setTimeout(async()=>{
+    const isin=(g('stk-isin').value||'').trim().toUpperCase();
+    if(!/^IN[A-Z0-9]{10}$/.test(isin))return;
+    // 1. Local NSE array lookup (instant)
+    const local=NSE.find(s=>s.isin===isin);
+    if(local){
+      selStock={ticker:local.t,name:local.n,isin:local.isin};
+      g('stk-q').value=local.n;
+      g('stk-sd').classList.remove('open');
+      g('stk-sb').style.display='block';
+      g('stk-sb-n').textContent=local.n;
+      g('stk-sb-c').textContent=local.t+' · '+local.isin+' · NSE [auto-resolved]';
+      g('stk-save').disabled=false;
+      return;
+    }
+    // 2. MoneyControl search by ISIN (direct, no proxy)
+    g('stk-sb').style.display='block';
+    g('stk-sb-n').textContent='Resolving ISIN '+isin+'…';
+    g('stk-sb-c').textContent='Searching MoneyControl…';
+    try{
+      const mc=await mcSearch(isin);
+      if(mc&&mc.sc_id){
+        selStock={ticker:mc.sc_id.toUpperCase(),name:mc.name||isin,isin:isin};
+        g('stk-q').value=mc.name||isin;
+        g('stk-sd').classList.remove('open');
+        g('stk-sb-n').textContent=mc.name||isin;
+        g('stk-sb-c').textContent=mc.sc_id.toUpperCase()+' · '+isin+' · MoneyControl [auto-resolved]';
+        g('stk-save').disabled=false;
+        return;
+      }
+    }catch{}
+    // 3. Fallback: allow using ISIN as-is
+    selStock={ticker:isin,name:isin,isin:isin};
+    g('stk-q').value=isin;
+    g('stk-sb-n').textContent=isin+' (ISIN)';
+    g('stk-sb-c').textContent='Will resolve name on save · live price via MoneyControl';
+    g('stk-save').disabled=false;
+  },400);
+}
 async function doStkSearch(){
   const q=(g('stk-q').value||'').trim();const drop=g('stk-sd');if(!drop)return;
   if(q.length<1){drop.classList.remove('open');return;}
@@ -4433,7 +4475,7 @@ async function doStkSearch(){
   if(/^IN[A-Z0-9]{10}$/.test(qu)){
     const local=NSE.find(s=>s.isin===qu);
     if(local){drop.innerHTML=`<div class="si" onclick='pickStk(${JSON.stringify(local).replace(/'/g,"&#39;")})'><div class="si-n">${escH(local.n)}</div><div class="si-m">${local.t} · ${local.isin} · NSE (local)</div></div>`;return;}
-    drop.innerHTML='<div class="si"><div class="si-n ts">Resolving ISIN '+qu+' via BSE/Groww/Tickertape…</div></div>';
+    drop.innerHTML='<div class="si"><div class="si-n ts">Resolving ISIN '+qu+' via MoneyControl…</div></div>';
     try{
       const r=await resolveISINOnce(qu);
       if(r&&(r.name||r.ticker)){
